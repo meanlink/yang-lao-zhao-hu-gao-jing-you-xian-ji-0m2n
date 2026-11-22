@@ -87,7 +87,8 @@ docker compose exec -T backend python -m scripts.seed_demo
 2. 复核告警后打开「照护响应派单」。候选人员需覆盖完整的 15／30／60 分钟处置时限并保有容量。在办任务按照护员汇总，包括此前尚未完成的响应。结束覆盖前须完成或撤销本班关联的在办响应。覆盖到期后，已接单人员仍可登记结果。
 3. 值班长打开响应的「处置核对清单」，填写本次涉及的巡房、呼叫、移位安排、任务回执或交班补记。接单照护员逐项登记凭据或阻碍。受阻项目由值班长填写复核安排，再由照护员核对。页面保留每次处理的人员、时间和说明。
 4. 覆盖派单必须完成所有核对项目后才能提交处置结果。同一告警版本随后生成交班单时，会附上核对数量、处置回执和凭据链接，便于接班员签收前查看。
+5. 照护员临时离岗时，值班长在「照护响应」的响应卡上打开「移交在办响应」，选择接手人并填写缘由。接手人须与原响应同区、当班未结束、当班结束时刻不早于原处置截止时刻，且当班在办响应未达上限。已登记的核对项目、凭据和原截止时刻随单保留，剩余项目只由接手人处理，原班名额随即释放。移交与另一次派单同时争用最后一个空位时只有一笔成功；失败方提示容量已满，响应仍由原照护员续办。请求带移交单号，超时重试不会生成第二条移交记录。响应队列显示交接双方、登记人和缘由。
 
 首次种子运行会为康复翼一层创建 115-A 沈慧芳的告警和唐宁的 8 小时覆盖。唐宁使用 `relief@zhaohui.local` 和 `zhaohui-demo` 登录。覆盖到期后，值班长可登记新班次。再次执行 seed 会保留既有班次和业务记录。未登记过覆盖的区域可继续使用原有派单流程，值班长可为任何在办响应添加核对清单。
 
-新增模型位于 `backend/migrations/003_shift_coverage.sql` 和 `004_response_checks.sql`。`coverage*.py`、`checklist*.py` 负责规则、请求校验及 API。原生前端的值班覆盖、可用人员选择和核对工作台分别由 `shiftCoverage.js`、`coverageDispatch.js`、`responseChecks.js` 和 `checklistItems.js` 提供。
+新增模型位于 `backend/migrations/003_shift_coverage.sql`、`004_response_checks.sql` 和 `005_response_transfers.sql`。`coverage*.py`、`checklist*.py` 负责规则、请求校验及 API，移交规则在 `operations.py` 的 `transfer_response`。原生前端的值班覆盖、可用人员选择和核对工作台分别由 `shiftCoverage.js`、`coverageDispatch.js`、`responseChecks.js` 和 `checklistItems.js` 提供，移交入口与交接留痕在 `careOperations.js`。

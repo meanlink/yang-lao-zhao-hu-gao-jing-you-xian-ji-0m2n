@@ -1,5 +1,5 @@
 import {api} from './store.js';
-import {dispatchForm, dispatchPayload} from './coverageDispatch.js';
+import {dispatchForm, dispatchPayload, roleOptions} from './coverageDispatch.js';
 import {checkProgress} from './responseChecks.js';
 import {button, empty, escape, heading, panel, pill, priority, SHIFTS, time} from './shared.js';
 
@@ -12,6 +12,28 @@ const followups = {scheduled:'待复查', stable:'复查正常', referred:'已�
 const liveResponse = row => ['assigned', 'accepted'].includes(row.status);
 const alertLink = id => `<a class="text-link" href="#alerts/${id}">告警 #${id}</a>`;
 const query = (field, id) => id ? `?${field}=${id}` : '';
+
+function transferKey() {
+  return globalThis.crypto?.randomUUID?.() || `transfer-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
+function transferBlock(row, lead) {
+  const history = (row.transfers || []).length ? `<div class="note"><strong>移交留痕</strong>
+    ${row.transfers.map(entry=>`<p>${escape(entry.from_name)} → ${escape(entry.to_name)} · ${time(entry.moved_at)} · ${escape(entry.moved_name)} 登记<br>${escape(entry.reason)}</p>`).join('')}</div>` : '';
+  if (!lead || !liveResponse(row)) return history;
+  const blocked = (row.transfer_candidates || []).filter(candidate=>!candidate.eligible && candidate.note && candidate.carer_id !== row.assigned_to);
+  const hints = blocked.length ? `<div class="data-line">${blocked.map(candidate=>`<span>${escape(candidate.carer_name)}：${escape(candidate.note)}</span>`).join('')}</div>` : '';
+  const candidates = (row.transfer_candidates || []).filter(candidate=>candidate.eligible);
+  if (!candidates.length) return `${history}<p class="ops-time">同区暂无当班且有空位的接手人，当前仍由原照护员续办。</p>${hints}`;
+  const options = candidates.map(candidate=>[candidate.id,
+    `${candidate.carer_name} · ${SHIFTS[candidate.shift]} · 在办 ${candidate.active_count}/${candidate.capacity} · 至 ${time(candidate.ends_at)}`]);
+  return `${history}${hints}<details class="ops-actions"><summary>移交在办响应</summary>
+    <form class="stack ops-action" data-do="transferResponse" data-id="${row.id}" data-key="${transferKey()}">
+      <label>接手人（同区当班、有剩余空位、当班覆盖原截止时刻）<select name="to_coverage_id" required>${roleOptions(options)}</select></label>
+      ${noteField('移交缘由','reason','例如原照护员临时离岗，需由同区当班人员继续处置')}
+      <p class="field-hint">已核对的凭据随单保留，剩余项目由接手人处理。超时重试不会重复移交。</p>
+      ${button('确认移交','secondary')}</form></details>`;
+}
 
 function options(values) {
   return Object.entries(values).map(([id,label]) => `<option value="${escape(id)}">${escape(label)}</option>`).join('');
@@ -56,7 +78,7 @@ export async function responsesPage(state, alertId) {
     return item(row,badge,`${alertLink(row.alert_id)} · 版本 ${row.alert_revision} · 任务 #${row.id}`,
       `<div class="data-line">${priority(row.priority)} <span>${escape(row.assignee)}${row.assigned_shift ? ` · ${SHIFTS[row.assigned_shift]}` : ''} · 截止 ${time(row.due_at)}</span></div>
       <p class="ops-copy">${escape(row.instruction)}</p>${row.finish_note ? `<div class="note"><strong>${row.status === 'cancelled' ? '撤销说明' : '处置回执'}</strong><p>${escape(row.finish_note)}</p></div>` : ''}`,
-      `${checksLink}${accept}${complete}${cancel}`);
+      `${checksLink}${accept}${complete}${cancel}${transferBlock(row,state.user.role === 'lead')}`);
   }).join('');
   const canAssign = alert?.status === 'confirmed' && !alert.active_response_id && state.user.role === 'lead';
   const side = canAssign ? createPanel('派发响应','时限按告警的已复核优先级生成。',
@@ -127,6 +149,10 @@ export const careOperationsActions = {
     return write(`/alerts/${form.dataset.id}/care-responses`, dispatchPayload(form,data), '响应任务已派发');
   },
   acceptResponse(form) { return write(`/care-responses/${form.dataset.id}/accept`, {}, '已接单'); },
+  transferResponse(form,data) {
+    return write(`/care-responses/${form.dataset.id}/transfer`,
+      {to_coverage_id:Number(data.get('to_coverage_id')),request_key:form.dataset.key,reason:data.get('reason')}, '响应已移交给同区当班人员');
+  },
   completeResponse(form,data) { return write(`/care-responses/${form.dataset.id}/complete`, Object.fromEntries(data), '处置回执已提交'); },
   cancelResponse(form,data) { return write(`/care-responses/${form.dataset.id}/cancel`, Object.fromEntries(data), '响应任务已撤销'); },
   openContact(form,data) { return write(`/alerts/${form.dataset.id}/family-contact`, Object.fromEntries(data), '联络事项已登记'); },

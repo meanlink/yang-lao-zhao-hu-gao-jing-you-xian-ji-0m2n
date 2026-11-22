@@ -1,6 +1,6 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import Field, StringConstraints
 
 from .schemas import Input, Note, Revision
 
@@ -9,6 +9,12 @@ class AssignResponse(Revision):
     assigned_to: int = Field(gt=0)
     coverage_id: int | None = Field(default=None, gt=0)
     instruction: Note
+
+
+class TransferResponse(Input):
+    to_coverage_id: int = Field(gt=0)
+    request_key: Annotated[str, StringConstraints(strip_whitespace=True, min_length=8, max_length=100)]
+    reason: Note
 
 
 class FinishResponse(Input):

@@ -93,6 +93,7 @@ app.addEventListener('submit',async event=>{
   try {
     const message = await action(form,new FormData(form));
     if (message) inform(message);
+    if (event.submitter?.closest('details')) event.submitter.closest('details').open = false;
     if (route === location.hash) await render();
   }
   catch (error) { inform(error.message,true); }

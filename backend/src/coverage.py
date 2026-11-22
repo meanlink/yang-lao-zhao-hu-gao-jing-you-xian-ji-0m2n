@@ -30,6 +30,26 @@ def roster(db, unit=None, minutes=0):
                       {'unit': unit, 'minutes': minutes}).fetchall()
 
 
+CANDIDATE_ROWS = '''
+    SELECT c.*, s.name AS carer_name, COALESCE(load.active_count,0) AS active_count
+    FROM shift_coverage c JOIN staff s ON s.id=c.carer_id
+    LEFT JOIN LATERAL (
+        SELECT count(*) AS active_count FROM care_responses t WHERE t.assigned_to=c.carer_id
+        AND t.status IN ('assigned','accepted')
+    ) load ON true
+    WHERE c.ended_at IS NULL AND c.ends_at > clock_timestamp()
+      AND c.unit = ANY(%s::text[])
+    ORDER BY c.unit,s.name,c.id
+'''
+
+
+def on_duty_candidates(db, units):
+    """On-duty coverage rows for the given units, with each carer's active load."""
+    if not units:
+        return []
+    return db.execute(CANDIDATE_ROWS, (list(units),)).fetchall()
+
+
 def start(db, data, actor):
     lock_unit(db, data.unit)
     if not db.execute('SELECT 1 FROM residents WHERE unit=%s AND active LIMIT 1', (data.unit,)).fetchone():

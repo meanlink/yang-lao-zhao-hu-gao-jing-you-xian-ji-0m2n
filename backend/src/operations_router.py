@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends
 
-from . import operations
+from . import coverage, operations
 from .auth import current_staff, require
 from .db import connect
-from .operations_schemas import AssignResponse, FinishFollowup, FinishResponse, OpenContact, RecordAttempt, ScheduleFollowup
+from .operations_schemas import (AssignResponse, FinishFollowup, FinishResponse, OpenContact, RecordAttempt,
+                                 ScheduleFollowup, TransferResponse)
 from .schemas import Role
 
 router = APIRouter(tags=['care operations'])
@@ -17,7 +18,7 @@ receiver = require(Role.RECEIVER)
 def responses(staff=Depends(current_staff), alert_id: int | None = None):
     with connect() as db:
         items = db.execute(
-            '''SELECT t.*,r.name AS resident_name,r.room,s.name AS assignee,c.shift AS assigned_shift,
+            '''SELECT t.*,r.name AS resident_name,r.room,r.unit,s.name AS assignee,c.shift AS assigned_shift,
                       COALESCE(checks.total,0) AS check_count, COALESCE(checks.verified,0) AS verified_count,
                       COALESCE(checks.blocked,0) AS blocked_count,
                       now() > t.due_at AND t.status IN ('assigned','accepted') AS overdue
@@ -32,6 +33,29 @@ def responses(staff=Depends(current_staff), alert_id: int | None = None):
                ORDER BY (t.status IN ('assigned','accepted')) DESC,t.due_at,t.id DESC LIMIT 150''',
             {'alert': alert_id},
         ).fetchall()
+        if items:
+            transfer_rows = db.execute(
+                '''SELECT x.*,f.name AS from_name,s.name AS to_name,m.name AS moved_name
+                   FROM care_response_transfers x JOIN staff f ON f.id=x.from_staff
+                   JOIN staff s ON s.id=x.to_staff JOIN staff m ON m.id=x.moved_by
+                   WHERE x.response_id = ANY(%s::bigint[]) ORDER BY x.response_id,x.id''',
+                ([row['id'] for row in items],),
+            ).fetchall()
+            by_response = {}
+            for entry in transfer_rows:
+                by_response.setdefault(entry['response_id'], []).append(entry)
+        else:
+            by_response = {}
+        candidates = {}
+        if staff['role'] == 'lead':
+            live = [row for row in items if row['status'] in ('assigned', 'accepted')]
+            units = sorted({row['unit'] for row in live})
+            on_duty = coverage.on_duty_candidates(db, units)
+            for row in live:
+                candidates[row['id']] = operations.candidate_view(row, on_duty)
+        for row in items:
+            row['transfers'] = by_response.get(row['id'], [])
+            row['transfer_candidates'] = candidates.get(row['id'], [])
         carers = db.execute(
             """SELECT s.id,s.name FROM staff s WHERE s.role='carer' AND NOT EXISTS (
                    SELECT 1 FROM shift_coverage c WHERE c.carer_id=s.id AND c.ended_at IS NULL AND c.ends_at > now()
@@ -44,6 +68,18 @@ def responses(staff=Depends(current_staff), alert_id: int | None = None):
 def assign_response(alert_id: int, data: AssignResponse, staff=Depends(lead)):
     with connect() as db:
         return operations.create_response(db, alert_id, data, staff['id'])
+
+
+@router.get('/care-responses/{response_id}/transfer-candidates')
+def transfer_candidates(response_id: int, staff=Depends(lead)):
+    with connect() as db:
+        return operations.transfer_candidates(db, response_id)
+
+
+@router.post('/care-responses/{response_id}/transfer')
+def transfer_response(response_id: int, data: TransferResponse, staff=Depends(lead)):
+    with connect() as db:
+        return operations.transfer_response(db, response_id, data, staff['id'])
 
 
 @router.post('/care-responses/{response_id}/accept')
